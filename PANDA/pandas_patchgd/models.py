@@ -16,8 +16,8 @@ class DeiT_Backbone(nn.Module):
         self.encoder = timm.create_model('deit_tiny_distilled_patch16_224.fb_in1k', img_size=PATCH_SIZE,pretrained=True,num_classes=0)
         #----load pretrained weights--#
         #new_state_dict = {}
-        checkpoint = torch.load("/home/raghavmagazine/PatchGD-main/pandas_baseline/WD_4/best_val_metric.pt")
-        exit()
+        #checkpoint = torch.load("/home/raghavmagazine/PatchGD-main/pandas_baseline/WD_4/best_val_metric.pt")
+        #exit()
         #model = timm.create_model('deit_tiny_distilled_patch16_224.fb_in1k',img_size=PATCH_SIZE,pretrained=False,num_classes=0)
         #for k,v in checkpoint["model1_weights"].items():
         #    if "encoder" in k:
