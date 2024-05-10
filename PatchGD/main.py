@@ -15,6 +15,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group, all_gather
 import os
 
+import plotly.express as px
+
 def ddp_setup(rank: int, world_size: int):
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "12355"
@@ -60,18 +62,8 @@ class PatchGD_Trainer():
 
         self.validation_loader = DataLoader(validation_dataset,batch_size=BATCH_SIZE,shuffle=False,num_workers=NUM_WORKERS)
         
-        if self.monitor_wandb:
-            run = wandb.init(project=experiment, entity="gowreesh", group=GROUP, reinit=True)
-            wandb.run.name = run_name
-            wandb.run.save()
-            wandb.log({
-                "batch_size": batch_size,
-                'head': head,
-                'latent_dimension': latent_dimension,
-                'percent_sampling': percent_sampling,
-                'grad_accumulation': grad_accumulation
-            })
-
+        if self.monitor_wandb and self.accelarator == 0:
+            wandb.init(project="PatchGD-2.0", name=EXPT_NAME)
     
         if self.save_models:
             os.makedirs(self.model_save_dir,exist_ok=True)
@@ -159,25 +151,53 @@ class PatchGD_Trainer():
             num_train = num_train + labels.shape[0]
 
             L1 = torch.zeros((batch_size,self.latent_dimension,self.num_patches,self.num_patches))
+            
             L1 = L1.to(self.accelarator)
 
             patch_dataset = PatchDataset(images,self.num_patches,self.stride,self.patch_size)
             if DISTRIBUTE_TRAINING_PATCHES:
-                patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil(len(patch_dataset)*self.percent_sampling)),shuffle=False,sampler=DistributedSampler(patch_dataset))
+                num_gpus = torch.cuda.device_count()
+                patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil((len(patch_dataset)*self.percent_sampling)/num_gpus)),shuffle=False,sampler=DistributedSampler(patch_dataset))
             else:
                 patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil(len(patch_dataset)*self.percent_sampling)),shuffle=True)
-
 
             with torch.no_grad():
                 for patches, idxs in patch_loader:
                     patches = patches.to(self.accelarator)
                     patches = patches.reshape(-1,3,self.patch_size,self.patch_size)
                     out = self.model1(patches)
-                    out = out.reshape(-1,batch_size, self.latent_dimension)
-                    out = torch.permute(out,(1,2,0))
                     row_idx = idxs//self.num_patches
                     col_idx = idxs%self.num_patches
-                    L1[:,:,row_idx,col_idx] = out
+                    break
+
+            num_gpus = torch.cuda.device_count()
+            all_L1 = [torch.zeros_like(out).to(self.accelarator) for _ in range(num_gpus)]
+            all_row_id = [torch.zeros_like(row_idx).to(self.accelarator) for _ in range(num_gpus)]
+            all_col_id = [torch.zeros_like(col_idx).to(self.accelarator) for _ in range(num_gpus)]
+            
+
+            with torch.no_grad():
+                for patches, idxs in patch_loader:
+                    patches = patches.to(self.accelarator)
+                    patches = patches.reshape(-1,3,self.patch_size,self.patch_size)
+                    out = self.model1(patches)
+                    row_idx = idxs//self.num_patches
+                    col_idx = idxs%self.num_patches
+
+                    if DISTRIBUTE_TRAINING_PATCHES:
+                        all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
+                        all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
+                        all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
+                        for index in range(0,len(all_L1)):
+                            out_temp = all_L1[index]
+                            out_temp = out_temp.reshape(-1,batch_size, self.latent_dimension)
+                            out_temp = torch.permute(out_temp,(1,2,0))
+                            L1[:,:,all_row_id[index],all_col_id[index]] = out_temp 
+                    else:
+                        out = out.reshape(-1,batch_size, self.latent_dimension)
+                        out = torch.permute(out,(1,2,0))
+                        L1[:,:,row_idx,col_idx] = out
+
 
             train_loss_sub_epoch = 0
             self.optimizer.zero_grad()
@@ -185,27 +205,34 @@ class PatchGD_Trainer():
 
             if DISTRIBUTE_TRAINING_PATCHES:
                 patch_loader.sampler.set_epoch(epoch)
-                if len(patch_loader) % int(math.ceil(len(patch_dataset)*self.percent_sampling)) == 0:
-                    max_inner_iteration = len(patch_loader) // int(math.ceil(len(patch_dataset)*self.percent_sampling))
-                else:
-                    max_inner_iteration = 1 + len(patch_loader) // int(math.ceil(len(patch_dataset)*self.percent_sampling))
 
-                    if max_inner_iteration < self.epsilon:
-                        print("On GPU :",self.accelarator)
-                        print("Epsilon :",self.epsilon)
-                        print("Max Inner Iteration:",max_inner_iteration)
-                        print("Optimizer will not run!!")
-                        exit()
+            all_L1 = [torch.zeros_like(out).to(self.accelarator) for _ in range(num_gpus)]
+            all_row_id = [torch.zeros_like(row_idx).to(self.accelarator) for _ in range(num_gpus)]
+            all_col_id = [torch.zeros_like(col_idx).to(self.accelarator) for _ in range(num_gpus)]
+
             for inner_iteration, (patches,idxs) in enumerate(patch_loader):
                 L1 = L1.detach()
                 patches = patches.to(self.accelarator)
                 patches = patches.reshape(-1,3,self.patch_size,self.patch_size)
                 out = self.model1(patches)
-                out = out.reshape(-1,batch_size, self.latent_dimension)
-                out = torch.permute(out,(1,2,0))
                 row_idx = idxs//self.num_patches
                 col_idx = idxs%self.num_patches
-                L1[:,:,row_idx,col_idx] = out
+
+                if DISTRIBUTE_TRAINING_PATCHES:
+                    all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
+                    all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
+                    all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
+                    for index in range(0,len(all_L1)):
+                        out_temp = all_L1[index]
+                        out_temp = out_temp.reshape(-1,batch_size, self.latent_dimension)
+                        out_temp = torch.permute(out_temp,(1,2,0))
+                        L1[:,:,all_row_id[index],all_col_id[index]] = out_temp
+                else:
+                    out = out.reshape(-1,batch_size, self.latent_dimension)
+                    out = torch.permute(out,(1,2,0))
+                    L1[:,:,row_idx,col_idx] = out
+
+
                 outputs = self.model2.forward(L1)
                 loss = self.criterion(outputs,labels)
                 loss = loss/self.epsilon
@@ -218,6 +245,7 @@ class PatchGD_Trainer():
                     inner_inter =  inner_inter + 1
                 if inner_iteration + 1 >= self.inner_iteration:
                     break
+                    
             self.scheduler.step()
             running_loss_train = running_loss_train + train_loss_sub_epoch
             with torch.no_grad():
@@ -301,12 +329,6 @@ class PatchGD_Trainer():
                 loss = self.criterion(outputs,labels)
                 l = loss.item()
                 running_loss_val = running_loss_val + loss.item()
-                if self.monitor_wandb:
-                    wandb.log({f"lrs/lr-{ii}":learning_rate for ii,learning_rate in enumerate(self.lr)})
-                    wandb.log({"val_loss_step":l/batch_size,
-                            "epoch":self.epoch,
-                            'val_accuracy_step_metric':val_metrics_step['accuracy'],
-                            'val_kappa_step_metric':val_metrics_step['kappa']})
             
             val_metrics = self.get_metrics(val_predictions,val_labels)
             if self.accelarator == 0:
@@ -321,8 +343,6 @@ class PatchGD_Trainer():
         best_validation_loss = float('inf')
         best_validation_accuracy = 0
         best_validation_metric = -float('inf')
-        if self.accelarator == 0:
-            wandb.init(project="PatchGD", name=EXPT_NAME)
         for epoch in range(self.epochs):
             if self.accelarator == 0:
                 print(f"Epoch {epoch+1}/{self.epochs}")
@@ -374,7 +394,8 @@ class PatchGD_Trainer():
                     'epoch':self.epoch,
                     'best_loss':best_validation_loss,
                     'best_accuracy':best_validation_accuracy,
-                    'best_metric': best_validation_metric})
+                    'best_metric': best_validation_metric,
+                    'learning_rate': self.lr[0]})
                     
                 if self.save_models:
                     torch.save({
