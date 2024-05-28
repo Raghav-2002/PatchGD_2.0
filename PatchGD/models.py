@@ -63,7 +63,7 @@ class CNN_Block(nn.Module):
 
 def get_head(config_type,latent_dimension,feature_dimension,num_classes,num_patches):
     num_layers_sr = (1,3)
-    
+
     if config_type == model_config.SMALLER:
         num_layers_sr = (0,3)
     elif config_type == model_config.LARGER:
@@ -74,7 +74,7 @@ def get_head(config_type,latent_dimension,feature_dimension,num_classes,num_patc
         feaure_dimension = 512
     return CNN_Block(num_layers_sr=num_layers_sr,
                     latent_dim=latent_dimension,
-                    feature_dim=feaure_dimension,
+                    feature_dim=feature_dimension,
                     num_classes=num_classes,
                     num_patches=num_patches)
     
