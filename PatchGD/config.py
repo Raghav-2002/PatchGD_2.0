@@ -22,17 +22,17 @@ DISTRIBUTE_TRAINING_IMAGES = True
 
 # General Parameters
 BACKBONE_MODEL = "DeiT"
-MONITOR_WANDB = False 
+MONITOR_WANDB = True 
 EPOCHS = 100
-SAVE_MODELS = False
+SAVE_MODELS = True
 NUM_CLASSES = 6
 SEED = 42
-TRAIN_ROOT_DIR = f'/home/raghavmagazine/pandas_dataset/training_images_512'
+TRAIN_ROOT_DIR = f'/home/akashnyun/pandas_dataset/training_images_512'
 VAL_ROOT_DIR = TRAIN_ROOT_DIR
-TRAIN_CSV_PATH = f'/home/raghavmagazine/kfold.csv'
+TRAIN_CSV_PATH = f'/home/akashnyun/kfold.csv'
 MEAN = [0.9770, 0.9550, 0.9667]
 STD = [0.0783, 0.1387, 0.1006]
-MODEL_SAVE_DIR = "/home/raghavmagazine/PatchGD-main/pandas_patchgd/checkpoints/"
+MODEL_SAVE_DIR = "/home/akashnyun/PatchGD-git/PatchGD_2.0/PatchGD/checkpoints/"
 DECAY_FACTOR = 1
 VALIDATION_EVERY = 1
 NUM_WORKERS = 4
@@ -52,7 +52,7 @@ LEARNING_RATE_HEAD = 1e-5
 STRIDE = PATCH_SIZE
 NUM_PATCHES = ((IMAGE_SIZE-PATCH_SIZE)//STRIDE) + 1
 NUM_WORKERS = 4
-HEAD_TYPE = "MSA" # MSA or CNN
+HEAD_TYPE = "CNN" # MSA or CNN
 OPTIMIZER_WEIGHT_DECAY = 1e-2
 # MSA Parameters
 HEADS = 5
@@ -66,7 +66,7 @@ CNN_HEAD_TYPE = "original" # original,smaller,larger,smaller_feat,larger_feat
 
 
 #RUN_NAME = f'{IMAGE_SIZE}_{PATCH_SIZE}-{PERCENT_SAMPLING}-bs-{BATCH_SIZE}-resnet50+head-{FEATURE}-datetime_{date_time}' 
-EXPT_NAME = BACKBONE_MODEL+"_ImgSize"+str(IMAGE_SIZE)+"_BS"+str(BATCH_SIZE)+"_IBS"+str(int(((int(IMAGE_SIZE/PATCH_SIZE))**2)*PERCENT_SAMPLING))+"_PS"+str(PATCH_SIZE)+"_"+str(EPSILON)+"IB-Grad_WD-"+str(OPTIMIZER_WEIGHT_DECAY)
+EXPT_NAME = BACKBONE_MODEL+"_ImgSize"+str(IMAGE_SIZE)+"_BS"+str(BATCH_SIZE)+"_IBS"+str(int(((int(IMAGE_SIZE/PATCH_SIZE))**2)*PERCENT_SAMPLING))+"_PS"+str(PATCH_SIZE)+"_"+str(EPSILON)+"IB-Grad_WD-"+str(OPTIMIZER_WEIGHT_DECAY)+"-HeadType-"+str(HEAD_TYPE)
 
 
 
