@@ -355,8 +355,8 @@ class PatchGD_Trainer():
                         torch.save({
                             'model1_weights': self.model1.module.state_dict(),
                             'model2_weights': self.model2.module.state_dict(),
-                            'optimizer_state': self.optimizer.module.state_dict(),
-                            'scheduler_state': self.scheduler.module.state_dict(),
+                            'optimizer_state': self.optimizer.state_dict(),
+                            'scheduler_state': self.scheduler.state_dict(),
                             'epoch' : epoch+1,
                         }, f"{self.model_save_dir}/best_val_loss.pt")
 
@@ -366,8 +366,8 @@ class PatchGD_Trainer():
                         torch.save({
                             'model1_weights': self.model1.module.state_dict(),
                             'model2_weights': self.model2.module.state_dict(),
-                            'optimizer_state': self.optimizer.module.state_dict(),
-                            'scheduler_state': self.scheduler.module.state_dict(),
+                            'optimizer_state': self.optimizer.state_dict(),
+                            'scheduler_state': self.scheduler.state_dict(),
                             'epoch' : epoch+1,
                         }, f"{self.model_save_dir}/best_val_accuracy.pt")
 
@@ -377,8 +377,8 @@ class PatchGD_Trainer():
                         torch.save({
                             'model1_weights': self.model1.module.state_dict(),
                             'model2_weights': self.model2.module.state_dict(),
-                            'optimizer_state': self.optimizer.module.state_dict(),
-                            'scheduler_state': self.scheduler.module.state_dict(),
+                            'optimizer_state': self.optimizer.state_dict(),
+                            'scheduler_state': self.scheduler.state_dict(),
                             'epoch' : epoch+1,
                         }, f"{self.model_save_dir}/best_val_metric.pt")
 
@@ -399,8 +399,8 @@ class PatchGD_Trainer():
                     torch.save({
                     'model1_weights': self.model1.module.state_dict(),
                     'model2_weights': self.model2.module.state_dict(),
-                    'optimizer_state': self.optimizer.module.state_dict(),
-                    'scheduler_state': self.scheduler.module.state_dict(),
+                    'optimizer_state': self.optimizer.state_dict(),
+                    'scheduler_state': self.scheduler.state_dict(),
                     'epoch' : epoch+1,
                     }, f"{self.model_save_dir}/last_epoch.pt")
         
