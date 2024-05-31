@@ -1,0 +1,7 @@
+PANDA/pandas_baseline/__pycache__/config.cpython-310.pyc
+PANDA/pandas_baseline/wandb/latest-run
+PANDA/pandas_baseline/wandb/*
+PANDA/pandas_baseline/__pycache__/*
+*.pyc
+*.pt
+PatchGD/wandb/*
