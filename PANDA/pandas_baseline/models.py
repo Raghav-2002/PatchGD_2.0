@@ -24,7 +24,7 @@ class DeiT_Backbone(nn.Module):
     def __init__(self,num_classes):
         super(DeiT_Backbone,self).__init__()
         #self.encoder = timm.create_model('deit_tiny_distilled_patch16_224.fb_in1k',img_size=RANDOM_PATCH_SIZE,pretrained=True,num_classes=0)
-        self.encoder = timm.create_model('deit_small_distilled_patch16_224.fb_in1k',img_size=512,pretrained=True,num_classes=0)
+        self.encoder = timm.create_model('deit_small_distilled_patch16_224.fb_in1k',img_size=IMAGE_SIZE,pretrained=True,num_classes=0)
         self.fc = nn.Linear(384,num_classes)
         print("Using DieT")
     def forward(self,x):

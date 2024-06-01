@@ -10,7 +10,7 @@ import wandb
 import torch.nn as nn
 from transformers import DeiTConfig, DeiTModel
 import random
-
+from torch.cuda.amp import autocast, GradScaler
 class Trainer():
     def __init__(self,
                 seed,
@@ -68,7 +68,7 @@ class Trainer():
         if len(self.train_dataset)%batch_size!=0:
             steps_per_epoch+=1
         self.scheduler = transformers.get_linear_schedule_with_warmup(self.optimizer,warmup_epochs*steps_per_epoch,decay_factor*self.epochs*steps_per_epoch)
-        
+        self.scaler = GradScaler()
     
     def get_metrics(self,predictions,actual,isTensor=False):
         if isTensor:
@@ -103,22 +103,36 @@ class Trainer():
             batch_size = labels.shape[0]
             num_train += labels.shape[0]
             self.optimizer.zero_grad()
-            outputs = self.model1(images)
-            # if torch.isnan(outputs).any():
-            #     print("output has nan")
-            _,preds = torch.max(outputs,1)
-            train_correct += (preds == labels).sum().item()
-            correct = (preds == labels).sum().item()
-
+            if FP16:
+                print("FP16")
+                with torch.autocast("cuda"):
+                    outputs = self.model1(images)
+                    # if torch.isnan(outputs).any():
+                    #     print("output has nan")
+                    _,preds = torch.max(outputs,1)
+                    train_correct += (preds == labels).sum().item()
+                    correct = (preds == labels).sum().item()
+                    loss = self.criterion(outputs,labels)
+            else:
+                outputs = self.model1(images)
+                # if torch.isnan(outputs).any():
+                #     print("output has nan")
+                _,preds = torch.max(outputs,1)
+                train_correct += (preds == labels).sum().item()
+                correct = (preds == labels).sum().item()
+                loss = self.criterion(outputs,labels)
             train_metrics_step = self.get_metrics(preds,labels,True)
             train_predictions = np.concatenate((train_predictions,preds.detach().cpu().numpy()))
             train_labels = np.concatenate((train_labels,labels.detach().cpu().numpy()))
-
-            loss = self.criterion(outputs,labels)
             l = loss.item()
             running_loss_train += loss.item()
-            loss.backward()
-            self.optimizer.step()
+            
+            if not FP16:
+                loss.backward()
+                self.optimizer.step()
+            else:
+                self.scaler.scale(loss).backward()
+                self.scaler.step(optimizer)
             self.scheduler.step()
             self.lr = self.get_lr(self.optimizer)
             if self.monitor_wandb:
