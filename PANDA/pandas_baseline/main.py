@@ -13,9 +13,6 @@ warnings.filterwarnings('ignore')
 if __name__ == '__main__':
     DEVICE_ID = DEVICE_IDS
     MONITOR_WANDB = False
-    SCALE_FACTOR = 1
-    IMAGE_SIZE = int(SCALE_FACTOR * 512)
-    BATCH_SIZE = 64 ######################################
     FEATURE = '' ######################################
     MEMORY = 4 ######################################
     

@@ -44,7 +44,6 @@ class Trainer():
         self.val_dataset = val_dataset 
         self.train_loader = DataLoader(self.train_dataset,batch_size=batch_size,shuffle=True,num_workers=num_workers)
         self.validation_loader = DataLoader(self.val_dataset,batch_size=batch_size,shuffle=False,num_workers=num_workers)
-        
         print(f"Length of train loader: {len(self.train_loader)},Validation loader: {(len(self.validation_loader))}")
     
         #self.model1 = Backbone(self.num_classes)
@@ -179,7 +178,8 @@ class Trainer():
 
     def run(self):
 
-        wandb.init(project="PatchGD", name=RUN_NAME_WANDB)
+        if self.monitor_wandb:
+            wandb.init(project="PatchGD", name=RUN_NAME_WANDB)
         best_validation_loss = float('inf')
         best_validation_accuracy = 0
         best_validation_metric = -float('inf')
