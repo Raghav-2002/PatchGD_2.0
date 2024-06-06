@@ -53,6 +53,7 @@ class PatchGD_Trainer():
         self.percent_sampling = PERCENT_SAMPLING
         self.train_dataset = train_dataset 
         self.val_dataset = validation_dataset 
+        self.scaler = torch.cuda.amp.GradScaler()
         if DISTRIBUTE_TRAINING_IMAGES:
             self.train_loader = DataLoader(train_dataset,batch_size=BATCH_SIZE,shuffle=False,num_workers=NUM_WORKERS,sampler=DistributedSampler(train_dataset))
         else:
@@ -209,36 +210,44 @@ class PatchGD_Trainer():
             all_col_id = [torch.zeros_like(col_idx).to(self.accelarator) for _ in range(num_gpus)]
 
             for inner_iteration, (patches,idxs) in enumerate(patch_loader):
-                L1 = L1.detach()
-                patches = patches.to(self.accelarator)
-                patches = patches.reshape(-1,3,self.patch_size,self.patch_size)
-                out = self.model1(patches)
-                row_idx = idxs//self.num_patches
-                col_idx = idxs%self.num_patches
+                with torch.autocast(device_type = "cuda", dtype = torch.float16,enabled = FP16):
+                    L1 = L1.detach()
+                    patches = patches.to(self.accelarator)
+                    patches = patches.reshape(-1,3,self.patch_size,self.patch_size)
+                    out = self.model1(patches)
+                    row_idx = idxs//self.num_patches
+                    col_idx = idxs%self.num_patches
 
-                if DISTRIBUTE_TRAINING_PATCHES:
-                    all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
-                    all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
-                    all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
-                    for index in range(0,len(all_L1)):
-                        out_temp = all_L1[index]
-                        out_temp = out_temp.reshape(-1,batch_size, self.latent_dimension)
-                        out_temp = torch.permute(out_temp,(1,2,0))
-                        L1[:,:,all_row_id[index],all_col_id[index]] = out_temp
+                    if DISTRIBUTE_TRAINING_PATCHES:
+                        all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
+                        all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
+                        all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
+                        for index in range(0,len(all_L1)):
+                            out_temp = all_L1[index]
+                            out_temp = out_temp.reshape(-1,batch_size, self.latent_dimension)
+                            out_temp = torch.permute(out_temp,(1,2,0))
+                            L1[:,:,all_row_id[index],all_col_id[index]] = out_temp
+                    else:
+                        out = out.reshape(-1,batch_size, self.latent_dimension)
+                        out = torch.permute(out,(1,2,0))
+                        L1[:,:,row_idx,col_idx] = out
+
+
+                    outputs = self.model2.forward(L1)
+                    loss = self.criterion(outputs,labels)
+                    loss = loss/self.epsilon
+                if FP16==True:
+                    self.scaler.scale(loss).backward()
                 else:
-                    out = out.reshape(-1,batch_size, self.latent_dimension)
-                    out = torch.permute(out,(1,2,0))
-                    L1[:,:,row_idx,col_idx] = out
-
-
-                outputs = self.model2.forward(L1)
-                loss = self.criterion(outputs,labels)
-                loss = loss/self.epsilon
-                loss.backward()
+                    loss.backward()
                 train_loss_sub_epoch = train_loss_sub_epoch + loss.item()
 
                 if (inner_iteration + 1)%self.epsilon==0:
-                    self.optimizer.step()
+                    if FP16 == True:
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                    else:
+                        self.optimizer.step()
                     self.optimizer.zero_grad()
                     inner_inter =  inner_inter + 1
                 if inner_iteration + 1 >= self.inner_iteration:
