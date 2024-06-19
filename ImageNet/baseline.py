@@ -213,9 +213,9 @@ class IMAGENET100_test(Dataset):
         return image,image_id
 
 class DeiT_Backbone(nn.Module):
-    def __init__(self,num_classes):
+    def __init__(self,image_size,num_classes):
         super(DeiT_Backbone,self).__init__()
-        self.encoder = timm.create_model('deit_tiny_distilled_patch16_224.fb_in1k',img_size=384,pretrained=True,num_classes=0)
+        self.encoder = timm.create_model('deit_tiny_distilled_patch16_224.fb_in1k',img_size=image_size,pretrained=True,num_classes=0)
         self.fc = nn.Linear(192,num_classes)
         print("Using DieT")
     def forward(self,x):
@@ -233,6 +233,7 @@ class BaselineModel(nn.Module):
 
 class Trainer():
     def __init__(self,
+                image_size,
                 train_dataset,
                 val_dataset,
                 test_dataset,
@@ -254,9 +255,9 @@ class Trainer():
         self.train_dataset = train_dataset 
         self.val_dataset = val_dataset 
         self.test_dataset = test_dataset
-
+        self.image_size = image_size
         self.train_loader = DataLoader(self.train_dataset,batch_size=batch_size,shuffle=True,num_workers=num_workers)
-        self.train_loader.dataset.transform = new_data_aug_generator_DeiT(384)
+        self.train_loader.dataset.transform = new_data_aug_generator_DeiT(self.image_size)
         self.validation_loader = DataLoader(self.val_dataset,batch_size=batch_size,shuffle=False,num_workers=num_workers)
         self.test_loader = DataLoader(self.test_dataset,batch_size=batch_size,shuffle=False,num_workers=num_workers)
 
@@ -395,7 +396,7 @@ class Trainer():
     def run(self,run_test=True):
         best_validation_loss = float('inf')
         best_validation_accuracy = 0
-        wandb.init(project="PatchGD_2", name="Deit_ImgSize_384_25C_1000T")
+        wandb.init(project="PatchGD_2_Imagenet_Ablations", name=f"Deit_ImgSize_{IMAGE_SIZE}_baseline")
         for epoch in range(self.epochs):
             print("="*31)
             print(f"{'-'*10} Epoch {epoch+1}/{self.epochs} {'-'*10}")
@@ -406,21 +407,22 @@ class Trainer():
         
             if val_logs["loss"] < best_validation_loss:
                 best_validation_loss = val_logs["loss"]
+                os.makedirs(f"/home/akashnyun/PatchGD-git/PatchGD_2.0/ImageNet/{IMAGE_SIZE}_baseline",exist_ok=True)
                 torch.save({
                         'model_weights': self.model.state_dict(),
                         'optimizer_state': self.optimizer.state_dict(),
                         'scheduler_state': self.scheduler.state_dict(),
                         'epoch' : epoch+1,
-                    }, f"/home/raghavmagazine/PatchGD-main/imagenet/Backbone/25C_1000T_384/best_val_loss.pt")
+                    }, f"/home/akashnyun/PatchGD-git/PatchGD_2.0/ImageNet/{IMAGE_SIZE}_baseline/best_val_loss.pt")
             if val_logs['accuracy'] > best_validation_accuracy:
+                os.makedirs(f"/home/akashnyun/PatchGD-git/PatchGD_2.0/ImageNet/{IMAGE_SIZE}_baseline",exist_ok=True)
                 best_validation_accuracy = val_logs['accuracy']
                 torch.save({
                         'model_weights': self.model.state_dict(),
                         'optimizer_state': self.optimizer.state_dict(),
                         'scheduler_state': self.scheduler.state_dict(),
                         'epoch' : epoch+1,
-                    }, f"/home/raghavmagazine/PatchGD-main/imagenet/Backbone/25C_1000T_384/best_val_accuracy.pt")
-        #if run_test:
+                    }, f"/home/akashnyun/PatchGD-git/PatchGD_2.0/ImageNet/{IMAGE_SIZE}_baseline/best_val_acc.pt")
         #    self.test_step()
         print('Best_accuracy',best_validation_accuracy)
         return {
@@ -431,7 +433,7 @@ class Trainer():
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Arguments for training baseline on ImageNet100")
-    parser.add_argument('--root_dir',default='/home/raghavmagazine/ImageNet/',type=str)
+    parser.add_argument('--root_dir',default='/home/akashnyun/imagenet100/',type=str)
     parser.add_argument('--epochs',default=300,type=int)
     parser.add_argument('--batch_size',default=150,type=int)
     parser.add_argument('--image_size',default=384,type=int)
@@ -455,7 +457,7 @@ if __name__ == '__main__':
 
     seed_everything(SEED)
     #model = BaselineModel(NUM_CLASSES)
-    model = DeiT_Backbone(NUM_CLASSES)
+    model = DeiT_Backbone(IMAGE_SIZE, NUM_CLASSES)
     model.to(DEVICE)
 
     for param in model.parameters():
@@ -467,8 +469,8 @@ if __name__ == '__main__':
     
     
 
-    train_df = pd.read_csv(os.path.join(ROOT_DIR,'Ablation/Train_25C_200T.csv'))
-    val_df = pd.read_csv(os.path.join(ROOT_DIR,'Ablation/Full_Validation_25C_200T.csv'))
+    train_df = pd.read_csv(os.path.join(ROOT_DIR,'train.csv'))
+    val_df = pd.read_csv(os.path.join(ROOT_DIR,'val.csv'))
     #train_df = pd.read_csv(os.path.join(ROOT_DIR,'train.csv'))
     #val_df = pd.read_csv(os.path.join(ROOT_DIR,'val.csv'))
     test_files = glob(f'{ROOT_DIR}/test/*')
@@ -497,6 +499,7 @@ if __name__ == '__main__':
     test_dataset = IMAGENET100_test(test_files,transform)
 
     trainer = Trainer(
+        image_size= IMAGE_SIZE,
         train_dataset=train_dataset,
         val_dataset=val_dataset,
         test_dataset=test_dataset,

@@ -240,7 +240,7 @@ class IMAGENET100(Dataset):
 
 def get_train_val_dataset(print_lengths=True):
     train_df = pd.read_csv(TRAIN_CSV_PATH)
-    train_dataset = IMAGENET100(train_df,build_transform(is_train=True,input_size=IMAGE_SIZE))
+    train_dataset = IMAGENET100(train_df, build_transform(is_train=True,input_size=IMAGE_SIZE))
     val_df = pd.read_csv(VAL_CSV_PATH)
     print(train_df.head())
     print(val_df.head())
@@ -299,7 +299,7 @@ class DeiT_Backbone(nn.Module):
         if pretrained:
          print("Using Pretrained Backbone...")
          new_state_dict = {}
-         #checkpoint = torch.load("/home/raghavmagazine/PatchGD-main/imagenet/checkpoints/AB_DeiT_ImgSize512_B200_IB8_P128_lr_0.0001953125_2IB-Grad_BB-PreT_False_HEAD_TF_25C_10T/best_val_accuracy.pt",map_location=ACCELARATOR)
+         #checkpoint = torch.load("/home/akashnyun/PatchGD-main/imagenet/checkpoints/AB_DeiT_ImgSize512_B200_IB8_P128_lr_0.0001953125_2IB-Grad_BB-PreT_False_HEAD_TF_25C_10T/best_val_accuracy.pt",map_location=ACCELARATOR)
          model = timm.create_model('deit_tiny_distilled_patch16_224.fb_in1k',img_size=PATCH_SIZE,pretrained=False,num_classes=0)
          for k,v in checkpoint['model_weights'].items():
             if "encoder" in k:
@@ -427,17 +427,17 @@ if __name__ == "__main__":
     HEAD_ARC = "TF"
     BACKBONE_PRETRAINED = False 
     CONT = False
-    ACCELARATOR = 'cuda:1' if torch.cuda.is_available() else 'cpu'
+    ACCELARATOR = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     PERCENT_SAMPLING = 1/4   #####
     GRAD_ACCUM = True    #####
     BATCH_SIZE = 50   #####
-    LEARNING_RATE = 0.0005*((BATCH_SIZE)/512) ###
+    LEARNING_RATE = 0.0005*((BATCH_SIZE)/256) ###
     args.lr = LEARNING_RATE
     args.batch_size = BATCH_SIZE
     MEMORY = '48'
-    IMAGE_SIZE = 512         #####
+    IMAGE_SIZE = 256         #####
     args.img_size = IMAGE_SIZE 
-    PATCH_SIZE = 256      #####
+    PATCH_SIZE = 64      #####
     SAVE_MODELS = True
 
     WARMUP_EPOCHS = 5
@@ -463,9 +463,9 @@ if __name__ == "__main__":
     CONF = "25C_10T"
     NAME = "DeiT_ImgSize"+str(IMAGE_SIZE)+"_B"+str(BATCH_SIZE)+"_IB"+str(int(((int(IMAGE_SIZE/PATCH_SIZE))**2)*PERCENT_SAMPLING))+"_P"+str(PATCH_SIZE)+"_lr_"+str(LEARNING_RATE)+"_"+str(EPSILON)+"IB-Grad_BB-PreT_"+str(BACKBONE_PRETRAINED)+"_HEAD_"+HEAD_ARC+"_"+CONF
     #MODEL_SAVE_DIR = f"../{'models_icml' if MAIN_RUN else 'models'}/{'sanity' if SANITY_CHECK else 'runs'}/{RUN_NAME}"
-    MODEL_SAVE_DIR = "/home/raghavmagazine/PatchGD-main/imagenet/checkpoints/AB_"+NAME
-    TRAIN_CSV_PATH = '/home/raghavmagazine/ImageNet/Ablation/Train_'+CONF+'.csv'
-    VAL_CSV_PATH = '/home/raghavmagazine/ImageNet/Ablation/Full_Validation_'+CONF+'.csv'
+    MODEL_SAVE_DIR = "/home/akashnyun/PatchGD-git/PatchGD_2.0/ImageNet/checkpoint256-ps64"
+    TRAIN_CSV_PATH = '/home/akashnyun/imagenet100/train.csv'
+    VAL_CSV_PATH = '/home/akashnyun/imagenet100/val.csv'
     DECAY_FACTOR = 1
     VALIDATION_EVERY = 1
     BASELINE = False
@@ -486,7 +486,7 @@ if __name__ == "__main__":
     #model1 = CNN(LATENT_DIMENSION)
     model1 = DeiT_Backbone(pretrained=BACKBONE_PRETRAINED)
     if CONT:
-        checkpoint = torch.load("/home/raghavmagazine/PatchGD-main/imagenet/checkpoints/AB_DeiT_ImgSize512_B200_IB8_P128_lr_0.0001953125_2IB-Grad_BB-PreT_False_HEAD_TF_"+CONF+"/best_val_accuracy.pt")
+        checkpoint = torch.load("/home/akashnyun/PatchGD-main/imagenet/checkpoints/AB_DeiT_ImgSize512_B200_IB8_P128_lr_0.0001953125_2IB-Grad_BB-PreT_False_HEAD_TF_"+CONF+"/best_val_accuracy.pt")
         model1.load_state_dict(checkpoint['model1_weights'])
     para_1 = sum(param.numel() for param in model1.parameters())
     #model2 = CNN_Block(LATENT_DIMENSION, NUM_CLASSES, NUM_PATCHES)

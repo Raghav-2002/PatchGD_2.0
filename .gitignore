@@ -5,3 +5,4 @@ PANDA/pandas_baseline/__pycache__/*
 *.pyc
 *.pt
 PatchGD/wandb/*
+ImageNet/wandb/*
