@@ -3,7 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 import cv2
 import torch
 from torchvision import transforms
-
+from config import *
 def get_transforms(image_size,mean,std):
     return transforms.Compose([
                 transforms.ToPILImage(),
@@ -24,6 +24,7 @@ class PandasDataset(Dataset):
         label = self.df.iloc[index].isup_grade
         image = cv2.imread(f"{self.root_dir}/{image_id}.png")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
         if self.transforms is not None:
             image = self.transforms(image)
         return image, torch.tensor(label), index

@@ -53,6 +53,7 @@ class PatchGD_Trainer():
         self.percent_sampling = PERCENT_SAMPLING
         self.train_dataset = train_dataset 
         self.val_dataset = validation_dataset 
+        self.num_gpus = torch.cuda.device_count()
         if DISTRIBUTE_TRAINING_IMAGES:
             self.train_loader = DataLoader(train_dataset,batch_size=BATCH_SIZE,shuffle=False,num_workers=NUM_WORKERS,sampler=DistributedSampler(train_dataset))
         else:
@@ -69,6 +70,7 @@ class PatchGD_Trainer():
 
         backbone = backbone.to("cuda")
         self.model1 = DDP(backbone, device_ids=[self.accelarator])
+        
         for param in self.model1.parameters():
             param.requires_grad = True
 
@@ -154,11 +156,14 @@ class PatchGD_Trainer():
 
             patch_dataset = PatchDataset(images,self.num_patches,self.stride,self.patch_size)
             if DISTRIBUTE_TRAINING_PATCHES:
+                print("PATCH PARALLELLISM")
                 num_gpus = torch.cuda.device_count()
                 patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil((len(patch_dataset)*self.percent_sampling)/num_gpus)),shuffle=False,sampler=DistributedSampler(patch_dataset))
+                print("INNER BATCH SIZE", int(math.ceil((len(patch_dataset)*self.percent_sampling)/num_gpus)))
+                print("NUMBER OF PATCHES", self.num_patches**2)
             else:
                 patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil(len(patch_dataset)*self.percent_sampling)),shuffle=True)
-
+            
             with torch.no_grad():
                 for patches, idxs in patch_loader:
                     patches = patches.to(self.accelarator)
@@ -190,7 +195,7 @@ class PatchGD_Trainer():
                             out_temp = all_L1[index]
                             out_temp = out_temp.reshape(-1,batch_size, self.latent_dimension)
                             out_temp = torch.permute(out_temp,(1,2,0))
-                            L1[:,:,all_row_id[index],all_col_id[index]] = out_temp 
+                            L1[:,:,all_row_id[index],all_col_id[index]] = out_temp
                     else:
                         out = out.reshape(-1,batch_size, self.latent_dimension)
                         out = torch.permute(out,(1,2,0))
@@ -215,25 +220,26 @@ class PatchGD_Trainer():
                 out = self.model1(patches)
                 row_idx = idxs//self.num_patches
                 col_idx = idxs%self.num_patches
+                out_mod = out.reshape(-1,batch_size, self.latent_dimension)
+                out_mod = torch.permute(out_mod,(1,2,0))
+                L1[:,:,row_idx,col_idx] = out_mod
 
                 if DISTRIBUTE_TRAINING_PATCHES:
                     all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
                     all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
                     all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
                     for index in range(0,len(all_L1)):
+                        if torch.equal(all_row_id[index],torch.tensor(row_idx).to(self.accelarator)) and torch.equal(all_col_id[index],torch.tensor(col_idx).to(self.accelarator)):
+                            continue
                         out_temp = all_L1[index]
                         out_temp = out_temp.reshape(-1,batch_size, self.latent_dimension)
                         out_temp = torch.permute(out_temp,(1,2,0))
                         L1[:,:,all_row_id[index],all_col_id[index]] = out_temp
-                else:
-                    out = out.reshape(-1,batch_size, self.latent_dimension)
-                    out = torch.permute(out,(1,2,0))
-                    L1[:,:,row_idx,col_idx] = out
-
-
+                
                 outputs = self.model2.forward(L1)
                 loss = self.criterion(outputs,labels)
                 loss = loss/self.epsilon
+                loss = loss
                 loss.backward()
                 train_loss_sub_epoch = train_loss_sub_epoch + loss.item()
 
