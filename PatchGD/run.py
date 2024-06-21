@@ -28,16 +28,27 @@ class Swin_Backbone(nn.Module):
         CLS = x[:,0,:]
         return CLS
 
+class Backbone(nn.Module):
+    def __init__(self,num_classes):
+        super(Backbone,self).__init__()
+        self.encoder = resnet50(pretrained=True)
+        self.encoder.fc = nn.Linear(2048,num_classes)
+        print("Using ResNet")
+    def forward(self,x):
+        return self.encoder(x)
+
+
 if __name__ == '__main__':
     
     SANITY_CHECK = False
     SANITY_DATA_LEN = None
-    if BACKBONE_MODEL == 'DeiT':
-        backbone = DeiT_Backbone(NUM_CLASSES)
-    elif BACKBONE_MODEL == 'Swin':
-        backbone = Swin_Backbone(NUM_CLASSES)
-    else:
-        raise ValueError(f"Wrong Backbone Name, Expected one from ['DeiT','Swin'] got {BACKBONE_MODEL}")
+    # if BACKBONE_MODEL == 'DeiT':
+    #     backbone = DeiT_Backbone(NUM_CLASSES)
+    # elif BACKBONE_MODEL == 'Swin':
+    #     backbone = Swin_Backbone(NUM_CLASSES)
+    # else:
+    #     raise ValueError(f"Wrong Backbone Name, Expected one from ['DeiT','Swin'] got {BACKBONE_MODEL}")
+    backbone = Backbone(NUM_CLASSES)
         
     train_dataset,val_dataset = get_train_val_dataset(TRAIN_CSV_PATH,
                                                     SANITY_CHECK,

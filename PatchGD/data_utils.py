@@ -26,7 +26,7 @@ class PandasDataset(Dataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         if self.transforms is not None:
             image = self.transforms(image)
-        return image, torch.tensor(label), index
+        return image, torch.tensor(label)
 
 
 def get_train_val_dataset(train_csv_path,

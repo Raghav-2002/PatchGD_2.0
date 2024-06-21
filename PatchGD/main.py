@@ -128,149 +128,43 @@ class PatchGD_Trainer():
         return lrs
 
     def train_step(self,epoch):
+        self.train_loader.sampler.set_epoch(epoch)
         self.model1.train()
-        self.model2.train()
-        if self.accelarator == 0:
-            print("Train Loop!")
+        print("Train Loop!")
         running_loss_train = 0.0
         train_correct = 0
         num_train = 0
         train_predictions = np.array([])
         train_labels = np.array([])
-
-        if DISTRIBUTE_TRAINING_IMAGES:
-            self.train_loader.sampler.set_epoch(epoch)
-
-
-        for images,labels,indices in tqdm(self.train_loader):
+        for images,labels in tqdm(self.train_loader):
             images = images.to(self.accelarator)
             labels = labels.to(self.accelarator)
             batch_size = labels.shape[0]
-            num_train = num_train + labels.shape[0]
-
-            L1 = torch.zeros((batch_size,self.latent_dimension,self.num_patches,self.num_patches))
-            
-            L1 = L1.to(self.accelarator)
-
-            patch_dataset = PatchDataset(images,self.num_patches,self.stride,self.patch_size)
-            if DISTRIBUTE_TRAINING_PATCHES:
-                num_gpus = torch.cuda.device_count()
-                patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil((len(patch_dataset)*self.percent_sampling)/num_gpus)),shuffle=False,sampler=DistributedSampler(patch_dataset))
-            else:
-                patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil(len(patch_dataset)*self.percent_sampling)),shuffle=True)
-
-            with torch.no_grad():
-                for patches, idxs in patch_loader:
-                    patches = patches.to(self.accelarator)
-                    patches = patches.reshape(-1,3,self.patch_size,self.patch_size)
-                    out = self.model1(patches)
-                    row_idx = idxs//self.num_patches
-                    col_idx = idxs%self.num_patches
-                    break
-
-            num_gpus = torch.cuda.device_count()
-            all_L1 = [torch.zeros_like(out).to(self.accelarator) for _ in range(num_gpus)]
-            all_row_id = [torch.zeros_like(row_idx).to(self.accelarator) for _ in range(num_gpus)]
-            all_col_id = [torch.zeros_like(col_idx).to(self.accelarator) for _ in range(num_gpus)]
-            
-
-            with torch.no_grad():
-                for patches, idxs in patch_loader:
-                    patches = patches.to(self.accelarator)
-                    patches = patches.reshape(-1,3,self.patch_size,self.patch_size)
-                    out = self.model1(patches)
-                    row_idx = idxs//self.num_patches
-                    col_idx = idxs%self.num_patches
-
-                    if DISTRIBUTE_TRAINING_PATCHES:
-                        all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
-                        all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
-                        all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
-                        for index in range(0,len(all_L1)):
-                            out_temp = all_L1[index]
-                            out_temp = out_temp.reshape(-1,batch_size, self.latent_dimension)
-                            out_temp = torch.permute(out_temp,(1,2,0))
-                            L1[:,:,all_row_id[index],all_col_id[index]] = out_temp 
-                    else:
-                        out = out.reshape(-1,batch_size, self.latent_dimension)
-                        out = torch.permute(out,(1,2,0))
-                        L1[:,:,row_idx,col_idx] = out
-
-
-            train_loss_sub_epoch = 0
+            num_train += labels.shape[0]
             self.optimizer.zero_grad()
-            inner_inter = 0
+            outputs = self.model1(images)
+            # if torch.isnan(outputs).any():
+            #     print("output has nan")
+            _,preds = torch.max(outputs,1)
+            train_correct += (preds == labels).sum().item()
+            correct = (preds == labels).sum().item()
 
-            if DISTRIBUTE_TRAINING_PATCHES:
-                patch_loader.sampler.set_epoch(epoch)
+            train_metrics_step = self.get_metrics(preds,labels,True)
+            train_predictions = np.concatenate((train_predictions,preds.detach().cpu().numpy()))
+            train_labels = np.concatenate((train_labels,labels.detach().cpu().numpy()))
 
-            all_L1 = [torch.zeros_like(out).to(self.accelarator) for _ in range(num_gpus)]
-            all_row_id = [torch.zeros_like(row_idx).to(self.accelarator) for _ in range(num_gpus)]
-            all_col_id = [torch.zeros_like(col_idx).to(self.accelarator) for _ in range(num_gpus)]
-
-            for inner_iteration, (patches,idxs) in enumerate(patch_loader):
-                L1 = L1.detach()
-                patches = patches.to(self.accelarator)
-                patches = patches.reshape(-1,3,self.patch_size,self.patch_size)
-                out = self.model1(patches)
-                row_idx = idxs//self.num_patches
-                col_idx = idxs%self.num_patches
-
-                if DISTRIBUTE_TRAINING_PATCHES:
-                    all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
-                    all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
-                    all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
-                    for index in range(0,len(all_L1)):
-                        out_temp = all_L1[index]
-                        out_temp = out_temp.reshape(-1,batch_size, self.latent_dimension)
-                        out_temp = torch.permute(out_temp,(1,2,0))
-                        L1[:,:,all_row_id[index],all_col_id[index]] = out_temp
-                else:
-                    out = out.reshape(-1,batch_size, self.latent_dimension)
-                    out = torch.permute(out,(1,2,0))
-                    L1[:,:,row_idx,col_idx] = out
-
-
-                outputs = self.model2.forward(L1)
-                loss = self.criterion(outputs,labels)
-                loss = loss/self.epsilon
-                loss.backward()
-                train_loss_sub_epoch = train_loss_sub_epoch + loss.item()
-
-                if (inner_iteration + 1)%self.epsilon==0:
-                    self.optimizer.step()
-                    self.optimizer.zero_grad()
-                    inner_inter =  inner_inter + 1
-                if inner_iteration + 1 >= self.inner_iteration:
-                    break
-                    
+            loss = self.criterion(outputs,labels)
+            l = loss.item()
+            running_loss_train += loss.item()
+            loss.backward()
+            self.optimizer.step()
             self.scheduler.step()
-            running_loss_train = running_loss_train + train_loss_sub_epoch
-            with torch.no_grad():
-                _,preds = torch.max(outputs,1)
-                correct = (preds == labels).sum().item()
-                train_correct = train_correct + correct
-
-                train_predictions = np.concatenate((train_predictions,preds.detach().cpu().numpy()))
-                train_labels = np.concatenate((train_labels,labels.detach().cpu().numpy()))
-
             self.lr = self.get_lr(self.optimizer)
-
-
-        # Collecting results accross GPUs for multi-GPU Training 
-        num_gpus = torch.cuda.device_count()
-        all_labels = [torch.zeros(len(train_labels),dtype=torch.float64).to(self.accelarator) for _ in range(num_gpus)]
-        all_predictions = [torch.zeros(len(train_predictions),dtype=torch.float64).to(self.accelarator) for _ in range(num_gpus)]
-        all_gather(tensor_list=all_labels, tensor=torch.tensor(train_labels).to(self.accelarator))
-        all_gather(tensor_list=all_predictions, tensor=torch.tensor(train_predictions).to(self.accelarator))
-        train_predictions = torch.cat(all_predictions).detach().cpu().numpy()
-        train_labels = torch.cat(all_labels).detach().cpu().numpy()
-
+            if self.monitor_wandb and self.accelarator==0:
+                wandb.log({'lr':self.lr,"train_loss_step":l/batch_size,'epoch':self.epoch,'train_accuracy_step_metric':train_metrics_step['accuracy'],'train_kappa_step_metric':train_metrics_step['kappa']})
         train_metrics = self.get_metrics(train_predictions,train_labels)
-
-        if self.accelarator == 0:
-            print(f"Train Loss: {running_loss_train/num_train} Train Accuracy Metric: {train_metrics['accuracy']} Train Kappa Metric: {train_metrics['kappa']}")    
-        
+        print(f"Train Loss: {running_loss_train/num_train} Train Accuracy: {train_correct/num_train}")
+        print(f"Train Accuracy Metric: {train_metrics['accuracy']} Train Kappa Metric: {train_metrics['kappa']}")    
         return {
                 'loss': running_loss_train/num_train,
                 'accuracy': train_metrics['accuracy'],
@@ -285,38 +179,20 @@ class PatchGD_Trainer():
         val_correct  = 0
         num_val = 0
         self.model1.eval()
-        self.model2.eval()
         with torch.no_grad():
-            if self.accelarator == 0:
-                print("Validation Loop!")
-            for images,labels,indices in tqdm(self.validation_loader):
+            print("Validation Loop!")
+            for images,labels in tqdm(self.validation_loader):
+    
                 images = images.to(self.accelarator)
                 labels = labels.to(self.accelarator)
                 batch_size = labels.shape[0]
-                
-                L1 = torch.zeros((batch_size,self.latent_dimension,self.num_patches,self.num_patches))
-                L1 = L1.to(self.accelarator)
 
-                patch_dataset = PatchDataset(images,self.num_patches,self.stride,self.patch_size)
-                patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil(len(patch_dataset)*self.percent_sampling)),shuffle=True)
-
-                num_patch_batches = 0
-                with torch.no_grad():
-                    for patches, idxs in patch_loader:
-                        num_patch_batches = num_patch_batches + 1
-                        patches = patches.to(self.accelarator)
-                        patches = patches.reshape(-1,3,self.patch_size,self.patch_size)
-                        out = self.model1(patches)
-                        out = out.reshape(-1,batch_size, self.latent_dimension)
-                        out = torch.permute(out,(1,2,0))
-                        row_idx = idxs//self.num_patches
-                        col_idx = idxs%self.num_patches
-                        L1[:,:,row_idx,col_idx] = out
-
-                outputs = self.model2.forward(L1)
-                num_val = num_val + labels.shape[0]
+                outputs = self.model1(images)
+                # if torch.isnan(outputs).any():
+                #     print("L1 has nan")
+                num_val += labels.shape[0]
                 _,preds = torch.max(outputs,1)
-                val_correct = val_correct + (preds == labels).sum().item()
+                val_correct += (preds == labels).sum().item()
                 correct = (preds == labels).sum().item()
 
                 val_metrics_step = self.get_metrics(preds,labels,True)
@@ -326,11 +202,13 @@ class PatchGD_Trainer():
 
                 loss = self.criterion(outputs,labels)
                 l = loss.item()
-                running_loss_val = running_loss_val + loss.item()
+                running_loss_val += loss.item()
+                if self.monitor_wandb and self.accelarator==0:
+                    wandb.log({'lr':self.lr,"val_loss_step":l/batch_size,"epoch":self.epoch,'val_accuracy_step_metric':val_metrics_step['accuracy'],'val_kappa_step_metric':val_metrics_step['kappa']})
             
             val_metrics = self.get_metrics(val_predictions,val_labels)
-            if self.accelarator == 0:
-                print(f"Validation Loss: {running_loss_val/num_val} Val Accuracy Metric: {val_metrics['accuracy']} Val Kappa Metric: {val_metrics['kappa']}")    
+            print(f"Validation Loss: {running_loss_val/num_val} Validation Accuracy: {val_correct/num_val}")
+            print(f"Val Accuracy Metric: {val_metrics['accuracy']} Val Kappa Metric: {val_metrics['kappa']}")    
             return {
                 'loss': running_loss_val/num_val,
                 'accuracy': val_metrics['accuracy'],

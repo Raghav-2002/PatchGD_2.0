@@ -17,11 +17,11 @@ date_time = now.strftime("%d_%m_%Y__%H_%M")
 # Distributed Training
 
 DISTRIBUTE_TRAINING_PATCHES = False
-DISTRIBUTE_TRAINING_IMAGES = False
+DISTRIBUTE_TRAINING_IMAGES = True
 
 
 # General Parameters
-BACKBONE_MODEL = "DeiT"
+BACKBONE_MODEL = "ResNet"
 MONITOR_WANDB = True 
 EPOCHS = 100
 SAVE_MODELS = True
@@ -38,7 +38,7 @@ NUM_WORKERS = 1
 # Model Hyperparameters
 PERCENT_SAMPLING = 0.1
 GRAD_ACCUM =  True
-BATCH_SIZE = 136
+BATCH_SIZE = 32
 PATCH_SIZE = 128
 SCALE_FACTOR = 1 
 IMAGE_SIZE = 512*SCALE_FACTOR
@@ -65,7 +65,7 @@ CNN_HEAD_TYPE = "original" # original,smaller,larger,smaller_feat,larger_feat
 
 
 #RUN_NAME = f'{IMAGE_SIZE}_{PATCH_SIZE}-{PERCENT_SAMPLING}-bs-{BATCH_SIZE}-resnet50+head-{FEATURE}-datetime_{date_time}' 
-EXPT_NAME = BACKBONE_MODEL+"_ImgSize"+str(IMAGE_SIZE)+"_BS"+str(BATCH_SIZE)+"_IBS"+str(int(((int(IMAGE_SIZE/PATCH_SIZE))**2)*PERCENT_SAMPLING))+"_PS"+str(PATCH_SIZE)+"_"+str(EPSILON)+"IB-Grad_WD-"+str(OPTIMIZER_WEIGHT_DECAY)+"-HeadType-"+str(HEAD_TYPE)
+EXPT_NAME = "Baseline_512_Resnet50_BatchSize"
 MODEL_SAVE_DIR = f"/home/akashnyun/PatchGD-git/PatchGD_2.0/PatchGD/checkpoints_{BACKBONE_MODEL}_{IMAGE_SIZE}_{BATCH_SIZE}_PatchGD_{HEAD_TYPE}/"
 
 
