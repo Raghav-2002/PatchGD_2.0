@@ -12,10 +12,10 @@ warnings.filterwarnings('ignore')
 
 if __name__ == '__main__':
     DEVICE_ID = DEVICE_IDS
-    MONITOR_WANDB = False
-    SCALE_FACTOR = 1
-    IMAGE_SIZE = int(SCALE_FACTOR * 512)
-    BATCH_SIZE = 64 ######################################
+    #MONITOR_WANDB = False
+    #SCALE_FACTOR = 1
+    #IMAGE_SIZE = int(SCALE_FACTOR * 512)
+    #BATCH_SIZE = 64 ######################################
     FEATURE = '' ######################################
     MEMORY = 4 ######################################
     
@@ -29,7 +29,7 @@ if __name__ == '__main__':
         os.makedirs(MODEL_SAVE_DIR,exist_ok=True)
 
     if MONITOR_WANDB:
-        run = wandb.init(project=EXPERIMENT, entity="aiiscaiisc078", reinit=True)
+        run = wandb.init(project=EXPERIMENT, reinit=True)
         wandb.run.name = RUN_NAME
         wandb.run.save()
 

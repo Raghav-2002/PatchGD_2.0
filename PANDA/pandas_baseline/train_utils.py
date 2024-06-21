@@ -47,8 +47,8 @@ class Trainer():
         
         print(f"Length of train loader: {len(self.train_loader)},Validation loader: {(len(self.validation_loader))}")
     
-        #self.model1 = Backbone(self.num_classes)
-        self.model1 = DeiT_Backbone(self.num_classes)
+        self.model1 = Backbone(self.num_classes)
+        #self.model1 = DeiT_Backbone(self.num_classes)
         self.model1.to(self.accelarator)
         for param in self.model1.parameters():
             param.requires_grad = True
