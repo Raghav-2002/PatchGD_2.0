@@ -4,7 +4,7 @@ from data_utils import *
 from models import *
 import numpy as np
 import warnings
-from main import *
+from patch_parallel_test import *
 warnings.filterwarnings('ignore')
 
 class DeiT_Backbone(nn.Module):
