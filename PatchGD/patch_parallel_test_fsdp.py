@@ -13,6 +13,7 @@ import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group, all_gather,all_reduce
+from torch.distributed.fsdp import FullyShardedDataParallel
 from torch.distributed.nn.functional import all_gather as AG
 import os
 import copy
@@ -95,8 +96,7 @@ class PatchGD_Trainer():
         #     param.requires_grad = False
         # backbone =UnusedParam(backbone,4,8)
         # backbone = backbone.to("cuda")
-
-        self.model1 = DDP(backbone, device_ids=[self.accelarator])
+        self.model1 = FullyShardedDataParallel(backbone)
         self.model1.module.encoder.blocks[-1].mlp.fc2.register_backward_hook(reduce_gradients)
         
         for param in self.model1.parameters():
@@ -105,14 +105,14 @@ class PatchGD_Trainer():
         if HEAD_TYPE == "MSA":
             head_arch = MSA_HEAD(accelarator=self.accelarator,num_patches=int(IMAGE_SIZE//PATCH_SIZE)**2,num_classes=NUM_CLASSES,dim=MSA_LATENT_DIMENSION,depth=DEPTH,heads=HEADS,mlp_dim=MSA_MLP_LATENT_DIMENSION,dropout=0.1,emb_dropout = 0.1)
             head_arch = head_arch.to("cuda")
-            self.model2 = DDP(head_arch, device_ids=[self.accelarator])
+            self.model2 = FullyShardedDataParallel(head_arch)
             self.model2.module.mlp_head.register_backward_hook(print_gradients)
             self.latent_dimension = MSA_LATENT_DIMENSION
         
         elif HEAD_TYPE == "CNN":
             head_arch = CNN_HEAD(name = self.head,latent_dimension=CNN_LATENT_DIMENSION,feature_dimension=CNN_FEATURE_DIMENSION,num_classes=NUM_CLASSES,num_patches=self.num_patches)
             head_arch = head_arch.to("cuda")
-            self.model2 = DDP(head_arch, device_ids=[self.accelarator])
+            self.model2 = FullyShardedDataParallel(head_arch)
             self.latent_dimension = CNN_LATENT_DIMENSION
         else:
             print("Invalid Head")
@@ -190,12 +190,12 @@ class PatchGD_Trainer():
 
         patch_dataset = PatchDataset(images,self.num_patches,self.stride,self.patch_size)
         if DISTRIBUTE_TRAINING_PATCHES:
-            print("PATCH PARALLELLISM")
+            # print("PATCH PARALLELLISM")
             num_gpus = torch.cuda.device_count()
             patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil((len(patch_dataset)*self.percent_sampling)/num_gpus)),shuffle=False,sampler=DistributedSampler(patch_dataset))
-            print("patch dataset len", len(patch_dataset),num_gpus,self.percent_sampling)
-            print("INNER BATCH SIZE", int(math.ceil((len(patch_dataset)*self.percent_sampling)/num_gpus)))
-            print("NUMBER OF PATCHES", self.num_patches**2)
+            # print("patch dataset len", len(patch_dataset),num_gpus,self.percent_sampling)
+            # print("INNER BATCH SIZE", int(math.ceil((len(patch_dataset)*self.percent_sampling)/num_gpus)))
+            # print("NUMBER OF PATCHES", self.num_patches**2)
         else:
             patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil(len(patch_dataset)*self.percent_sampling)),shuffle=True)
             print("INNER BATCH SIZE", int(math.ceil((len(patch_dataset)*self.percent_sampling))))
@@ -264,12 +264,12 @@ class PatchGD_Trainer():
             L1[:,:,row_idx,col_idx] = out_mod.to(self.rank)
             print(torch.equal(Lx,L1))
             if DISTRIBUTE_TRAINING_PATCHES:
-                # all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
-                # all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
-                # all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
-                all_row_id = AG(torch.tensor(row_idx).to(self.accelarator))
-                all_col_id = AG(torch.tensor(col_idx).to(self.accelarator))
-                all_L1 = AG(torch.tensor(out).to(self.accelarator))
+                all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
+                all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
+                all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
+                #all_row_id = AG(torch.tensor(row_idx).to(self.accelarator))
+                #all_col_id = AG(torch.tensor(col_idx).to(self.accelarator))
+                #all_L1 = AG(torch.tensor(out).to(self.accelarator))
                 for index in range(0,len(all_L1)):
                     if torch.equal(all_row_id[index],torch.tensor(row_idx).to(self.accelarator)) and torch.equal(all_col_id[index],torch.tensor(col_idx).to(self.accelarator)):
                         continue
@@ -278,7 +278,7 @@ class PatchGD_Trainer():
                     out_temp = torch.permute(out_temp,(1,2,0))
                     L1[:,:,all_row_id[index],all_col_id[index]] = out_temp
             torch.save(L1,f"InnerIteration_L1_GPU_RANK_{self.rank}_inneriteration_{inner_iteration}.pt")
-            print(f"InnerIteration_L1_GPU_RANK_{self.rank}_inneriteration_{inner_iteration}",torch.sum(L1))
+            print(f"L1_{self.accelarator}",torch.sum(L1))
             
             outputs = self.model2.forward(L1)
             print("O2", torch.sum(outputs))
@@ -287,31 +287,32 @@ class PatchGD_Trainer():
             loss = loss
             print("LOSS",loss)
             loss.backward()
-            print('B4 Optimizer',torch.sum(self.model2.module.mlp_head.weight.grad))
-            print("LOSS Grad",loss.grad)
+            #print('Last Layer T2 Grad',torch.sum(self.model2.module.mlp_head.weight.grad))
             
             train_loss_sub_epoch = train_loss_sub_epoch + loss.item()
             if (inner_iteration + 1)%self.epsilon==0:
                 
                 self.optimizer.step()
                 try:
-                    
-                    torch.save(self.model1.module.encoder.blocks[-1].mlp.fc2.weight,f"L1_weight_{self.accelarator}_{epoch}.pt")
-                    print("Grad sum",torch.sum(self.model1.module.encoder.blocks[-1].mlp.fc2.weight.grad))
-                    torch.save(self.model1.module.encoder.blocks[-1].mlp.fc2.weight.grad,f"L1_grad_{num_gpus}gpu_{epoch}.pt")
+                    with FullyShardedDataParallel.summon_full_params(self.model1, writeback=False, recurse=True):
+                        torch.save(self.model1.module.encoder.blocks[-1].mlp.fc2.weight,f"L1_weight_{self.accelarator}_{epoch}.pt")
+                        print("Grad sum",torch.sum(self.model1.module.encoder.blocks[-1].mlp.fc2.weight.grad))
+                        torch.save(self.model1.module.encoder.blocks[-1].mlp.fc2.weight.grad,f"L1_grad_{num_gpus}gpu_{epoch}.pt")
 
                 except:
                     print("Grad None L1")
                 try:
-                    torch.save(self.model2.module.mlp_head.weight.grad,f"L2_weight_{self.accelarator}_{epoch}.pt")
-                    print(f"L2_weight_{self.accelarator}_{epoch}",torch.sum(self.model2.module.mlp_head.weight))
-                    print("Grad sum L2",torch.sum(self.model2.module.mlp_head.weight.grad))
+                    with FullyShardedDataParallel.summon_full_params(self.model2, writeback=False, recurse=True):
+                        torch.save(self.model2.module.mlp_head.weight.grad,f"L2_weight_{self.accelarator}_{epoch}.pt")
+                        print(f"L2_weight_{self.accelarator}_{epoch}",torch.sum(self.model2.module.mlp_head.weight))
+                        print("Grad sum L2",torch.sum(self.model2.module.mlp_head.weight.grad))
                     torch.save(self.model2.module.mlp_head.weight.grad,f"L2_grad_{num_gpus}gpu_{epoch}.pt")
                 except:
                     print("Grad None L2")
                 try:
-                    print("Grad sum L2 fl",torch.sum(self.model2.module.transformer.layers[0][0].to_qkv.weight.grad))
-                    torch.save(self.model2.module.transformer.layers[0][0].to_qkv.weight.grad,f"L2fl_grad_{num_gpus}gpu_{epoch}.pt")
+                    with FullyShardedDataParallel.summon_full_params(self.model2, writeback=False, recurse=True):
+                        print("Grad sum L2 fl",torch.sum(self.model2.module.transformer.layers[0][0].to_qkv.weight.grad))
+                        torch.save(self.model2.module.transformer.layers[0][0].to_qkv.weight.grad,f"L2fl_grad_{num_gpus}gpu_{epoch}.pt")
                 except:
                     print("Grad None L2")
                 
