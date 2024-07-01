@@ -14,6 +14,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group, all_gather,all_reduce
 from torch.distributed.nn.functional import all_gather as AG
+from torchviz import make_dot
 import os
 import copy
 def print_gradients(module, grad_input, grad_output):
@@ -177,10 +178,12 @@ class PatchGD_Trainer():
 
         images,labels,indices = next(iter(self.train_loader))
 
-        #images = torch.rand(images.shape).to(self.accelarator)
+        #torch.save(images,"image_batch.pt")
+        #torch.save(labels,"labels.pt")
         images = torch.load("image_batch.pt",map_location="cpu").to(self.accelarator)
+        labels = torch.load("labels.pt",map_location="cpu").to(self.accelarator)
         #images= images.to(self.accelarator)
-        labels = labels.to(self.accelarator)
+        #labels = labels.to(self.accelarator)
         batch_size = labels.shape[0]
         num_train = num_train + labels.shape[0]
 
@@ -191,15 +194,16 @@ class PatchGD_Trainer():
         patch_dataset = PatchDataset(images,self.num_patches,self.stride,self.patch_size)
         if DISTRIBUTE_TRAINING_PATCHES:
             print("PATCH PARALLELLISM")
+            #Incase of Patch Parallelism the innerbatchsize = innerbatchsize /numgpus
             num_gpus = torch.cuda.device_count()
             patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil((len(patch_dataset)*self.percent_sampling)/num_gpus)),shuffle=False,sampler=DistributedSampler(patch_dataset))
-            print("patch dataset len", len(patch_dataset),num_gpus,self.percent_sampling)
-            print("INNER BATCH SIZE", int(math.ceil((len(patch_dataset)*self.percent_sampling)/num_gpus)))
-            print("NUMBER OF PATCHES", self.num_patches**2)
+            #print("patch dataset len", len(patch_dataset),num_gpus,self.percent_sampling)
+            #print("INNER BATCH SIZE", int(math.ceil((len(patch_dataset)*self.percent_sampling)/num_gpus)))
+            #print("NUMBER OF PATCHES", self.num_patches**2)
         else:
             patch_loader = DataLoader(patch_dataset,batch_size=int(math.ceil(len(patch_dataset)*self.percent_sampling)),shuffle=True)
-            print("INNER BATCH SIZE", int(math.ceil((len(patch_dataset)*self.percent_sampling))))
-            print("NUMBER OF PATCHES", self.num_patches**2)       
+            #print("INNER BATCH SIZE", int(math.ceil((len(patch_dataset)*self.percent_sampling))))
+            #print("NUMBER OF PATCHES", self.num_patches**2)       
         with torch.no_grad():
             for patches, idxs in patch_loader:
                 patches = patches.to(self.accelarator)
@@ -224,6 +228,7 @@ class PatchGD_Trainer():
                 col_idx = idxs%self.num_patches
 
                 if DISTRIBUTE_TRAINING_PATCHES:
+                    #gathers updated l1 and updates the local l1
                     all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
                     all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
                     all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
@@ -239,6 +244,7 @@ class PatchGD_Trainer():
 
         torch.save(L1,f"ZFilled_L1_GPU_RANK_{self.rank}.pt")
         print(f"ZFilled_L1_GPU_RANK_{self.rank}",torch.sum(L1))
+
         train_loss_sub_epoch = 0
         self.optimizer.zero_grad()
         inner_inter = 0
@@ -258,18 +264,21 @@ class PatchGD_Trainer():
             out = self.model1(patches)
             row_idx = idxs//self.num_patches
             col_idx = idxs%self.num_patches
+            #we prematurely append the locally computed l1 updates to the l1 to ensure gradient flow
             out_mod = out.reshape(-1,batch_size, self.latent_dimension)
             out_mod = torch.permute(out_mod,(1,2,0))
             print("l1_row_col",torch.equal(L1[:,:,row_idx,col_idx],out_mod))
             L1[:,:,row_idx,col_idx] = out_mod.to(self.rank)
             print(torch.equal(Lx,L1))
             if DISTRIBUTE_TRAINING_PATCHES:
-                # all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
-                # all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
-                # all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
-                all_row_id = AG(torch.tensor(row_idx).to(self.accelarator))
-                all_col_id = AG(torch.tensor(col_idx).to(self.accelarator))
-                all_L1 = AG(torch.tensor(out).to(self.accelarator))
+                # These allgather operations done propagate gradients, therefore there wont be multiple updates for a single patch
+                all_gather(tensor_list=all_row_id, tensor=torch.tensor(row_idx).to(self.accelarator))
+                all_gather(tensor_list=all_col_id, tensor=torch.tensor(col_idx).to(self.accelarator))
+                all_gather(tensor_list=all_L1, tensor=torch.tensor(out).to(self.accelarator))
+                #commenting the allgather with gradient flow below
+                #all_row_id = AG(torch.tensor(row_idx).to(self.accelarator))
+                #all_col_id = AG(torch.tensor(col_idx).to(self.accelarator))
+                #all_L1 = AG(torch.tensor(out).to(self.accelarator))
                 for index in range(0,len(all_L1)):
                     if torch.equal(all_row_id[index],torch.tensor(row_idx).to(self.accelarator)) and torch.equal(all_col_id[index],torch.tensor(col_idx).to(self.accelarator)):
                         continue
@@ -277,43 +286,60 @@ class PatchGD_Trainer():
                     out_temp = out_temp.reshape(-1,batch_size, self.latent_dimension)
                     out_temp = torch.permute(out_temp,(1,2,0))
                     L1[:,:,all_row_id[index],all_col_id[index]] = out_temp
-            torch.save(L1,f"InnerIteration_L1_GPU_RANK_{self.rank}_inneriteration_{inner_iteration}.pt")
+            #saving l1
+            torch.save(L1,f"InnerIteration_L1_GPU_RANK_{self.rank}_inneriteration_{inner_iteration}_{self.num_gpus}.pt")
             print(f"InnerIteration_L1_GPU_RANK_{self.rank}_inneriteration_{inner_iteration}",torch.sum(L1))
             
             outputs = self.model2.forward(L1)
             print("O2", torch.sum(outputs))
+
+            #to visualize backward graph
+            #make_dot(outputs.mean(), params=dict(self.model2.module.named_parameters())).render("model2noddp", format="png")
+
             loss = self.criterion(outputs,labels)
             loss = loss/self.epsilon
             loss = loss
             print("LOSS",loss)
             loss.backward()
-            print('B4 Optimizer',torch.sum(self.model2.module.mlp_head.weight.grad))
-            print("LOSS Grad",loss.grad)
-            
+
             train_loss_sub_epoch = train_loss_sub_epoch + loss.item()
             if (inner_iteration + 1)%self.epsilon==0:
                 
                 self.optimizer.step()
+
                 try:
-                    
+                    #Thetha 1 Last Layer
                     torch.save(self.model1.module.encoder.blocks[-1].mlp.fc2.weight,f"L1_weight_{self.accelarator}_{epoch}.pt")
                     print("Grad sum",torch.sum(self.model1.module.encoder.blocks[-1].mlp.fc2.weight.grad))
                     torch.save(self.model1.module.encoder.blocks[-1].mlp.fc2.weight.grad,f"L1_grad_{num_gpus}gpu_{epoch}.pt")
 
                 except:
-                    print("Grad None L1")
+                    print("Grad None T1")
                 try:
-                    torch.save(self.model2.module.mlp_head.weight.grad,f"L2_weight_{self.accelarator}_{epoch}.pt")
-                    print(f"L2_weight_{self.accelarator}_{epoch}",torch.sum(self.model2.module.mlp_head.weight))
-                    print("Grad sum L2",torch.sum(self.model2.module.mlp_head.weight.grad))
-                    torch.save(self.model2.module.mlp_head.weight.grad,f"L2_grad_{num_gpus}gpu_{epoch}.pt")
+                    #Thetha 2 Last Layer
+                    if HEAD_TYPE == "MSA:":
+                        torch.save(self.model2.module.mlp_head.weight.grad,f"L2_weight_{self.accelarator}_{epoch}.pt")
+                        print(f"L2_weight_{self.accelarator}_{epoch}",torch.sum(self.model2.module.mlp_head.weight))
+                        print("Grad sum L2",torch.sum(self.model2.module.mlp_head.weight.grad))
+                        torch.save(self.model2.module.mlp_head.weight.grad,f"L2_grad_{num_gpus}gpu_{epoch}.pt")
+                    else:
+                        torch.save(self.model2.module.linear.weight.grad,f"L2_weight_{self.accelarator}_{epoch}.pt")
+                        print(f"L2_weight_{self.accelarator}_{epoch}",torch.sum(self.model2.module.linear.weight))
+                        print("Grad sum L2",torch.sum(self.model2.module.linear.weight.grad))
+                        torch.save(self.model2.module.linear.weight.grad,f"L2_grad_{num_gpus}gpu_{epoch}.pt")
                 except:
-                    print("Grad None L2")
-                try:
-                    print("Grad sum L2 fl",torch.sum(self.model2.module.transformer.layers[0][0].to_qkv.weight.grad))
-                    torch.save(self.model2.module.transformer.layers[0][0].to_qkv.weight.grad,f"L2fl_grad_{num_gpus}gpu_{epoch}.pt")
+                    print("Grad None T2")
+                
+                try:    
+                    #Thetha 2 First layer 
+                    if HEAD_TYPE=="MSA":
+                        print("Grad sum L2 fl",torch.sum(self.model2.module.transformer.layers[0][0].to_qkv.weight.grad))
+                        torch.save(self.model2.module.transformer.layers[0][0].to_qkv.weight.grad,f"L2fl_grad_{num_gpus}gpu_{epoch}.pt")
+                    else:
+                        print("Grad sum L2 fl",torch.sum(self.model2.module.layers[0][0].weight.grad))
+                        torch.save(self.model2.module.layers[0][0].weight.grad,f"L2fl_grad_{num_gpus}gpu_{epoch}.pt")
                 except:
-                    print("Grad None L2")
+                    print("Grad None L2- First Layer")
                 
                 self.optimizer.zero_grad()
                 inner_inter =  inner_inter + 1
@@ -357,7 +383,7 @@ class PatchGD_Trainer():
         best_validation_loss = float('inf')
         best_validation_accuracy = 0
         best_validation_metric = -float('inf')
-        for i in range(5):
+        for i in range(1):
             print(f"Step {i+1}")
             train_logs = self.train_step(i)
         
